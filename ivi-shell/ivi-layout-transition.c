@@ -278,13 +278,17 @@ struct move_resize_view_data {
 };
 
 static void
-transition_move_resize_view_destroy(struct ivi_layout_transition *transition)
+transition_move_resize_view_destroy_surface(struct ivi_layout_surface *layout_surface) {
+	wl_signal_emit(&layout_surface->configured, layout_surface);
+}
+
+static void transition_move_resize_view_destroy(struct ivi_layout_transition *transition)
 {
 	struct move_resize_view_data *data =
 		(struct move_resize_view_data *)transition->private_data;
 	struct ivi_layout_surface *layout_surface = data->surface;
 
-	wl_signal_emit(&layout_surface->configured, layout_surface);
+	transition_move_resize_view_destroy_surface(layout_surface);
 
 	if (transition->private_data) {
 		free(transition->private_data);
@@ -329,29 +333,30 @@ create_move_resize_view_transition(
 			int32_t end_x, int32_t end_y,
 			int32_t start_width, int32_t start_height,
 			int32_t end_width, int32_t end_height,
-			ivi_layout_transition_frame_func frame_func,
-			ivi_layout_transition_destroy_func destroy_func,
 			uint32_t duration)
 {
 	struct ivi_layout_transition *transition;
 	struct move_resize_view_data *data;
 
 	transition = create_layout_transition();
-	if (transition == NULL)
-		return NULL;
+
+	if (transition == NULL) {
+		goto error;
+	}
 
 	data = malloc(sizeof(*data));
+
 	if (data == NULL) {
 		weston_log("%s: memory allocation fails\n", __func__);
-		free(transition);
-		return NULL;
+		goto error;
 	}
 
 	transition->type = IVI_LAYOUT_TRANSITION_VIEW_MOVE_RESIZE;
 	transition->is_transition_func = (ivi_layout_is_transition_func)is_transition_move_resize_view_func;
 
-	transition->frame_func = frame_func;
-	transition->destroy_func = destroy_func;
+	transition->frame_func = transition_move_resize_view_user_frame;
+	transition->destroy_func = transition_move_resize_view_destroy;
+
 	transition->private_data = data;
 
 	if (duration != 0)
@@ -369,6 +374,15 @@ create_move_resize_view_transition(
 	data->end_height   = end_height;
 
 	return transition;
+
+error:
+	if (transition)
+		free(transition);
+
+	/* immediate destroy surface on errors */
+	transition_move_resize_view_destroy_surface(surface);
+
+	return NULL;
 }
 
 void
@@ -414,9 +428,10 @@ ivi_layout_transition_move_resize_view(struct ivi_layout_surface *surface,
 		dest_x, dest_y,
 		start_size[0], start_size[1],
 		dest_width, dest_height,
-		transition_move_resize_view_user_frame,
-		transition_move_resize_view_destroy,
 		duration);
+
+	if (!transition)
+		return;
 
 	layout_transition_register(transition);
 }
